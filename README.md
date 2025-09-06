@@ -10,6 +10,8 @@ If I find a better, more polished, and less laggy addon in the future, I may use
 to continue the standalone work.
 
 ---
+If you're not interested how things works then you can go straight to: **Setting things up** paragraph.
+---
 
 I got one of those TTLock smart door knobs/locks. Since I really don’t like cloud solutions for anything security-related (and a CN-based cloud is a BIG nope for me), I wanted to avoid relying on it.
 
