@@ -22,5 +22,8 @@ init({
   gateway_port: process.env.GATEWAY_PORT || 2846,
   gateway_key: process.env.GATEWAY_KEY,
   gateway_user: process.env.GATEWAY_USER,
-  gateway_pass: process.env.GATEWAY_PASS
+  gateway_pass: process.env.GATEWAY_PASS,
+  // --- HTTP AUTH user&pass + fallback to `admin`:`admin`
+  http_user: process.env.HTTP_USER || "admin",
+  http_passwd: process.env.HTTP_PASS || "admin"
 });

@@ -1,6 +1,10 @@
 'use strict';
 
 const HomeAssistant = require('./ha');
+// add simple http authentication
+const auth = require("basic-auth");
+const os = require("os");
+
 
 /**
  * Handle the initialisation process
@@ -54,7 +58,16 @@ module.exports = async (options) => {
       mqttPass: options.mqttPass
     }
     ha = new HomeAssistant(haOptions);
-    await ha.connect();
+      // try-catch MQTT connection, and give more readable message on error
+      try {
+        await ha.connect();
+        console.log("✅️ Connected to MQTT server: ", haOptions.mqttUrl);
+      } catch(err) {
+        console.error("❌ Unable to connect to MQTT server:", haOptions.mqttUrl);
+        console.error("Error:", err.message || err);
+        // kill
+        process.exit(1);
+      }
   }
 
   await manager.init();
@@ -66,6 +79,22 @@ module.exports = async (options) => {
   if (options.port) {
     port = options.port;
   }
+
+  // ----------------------------------------------------
+  // basic http auth , fallback to default "admin:admin"
+  const basicAuth = (req, res, next) => {
+    const user = auth(req);
+    const uname = options.http_user;
+    const passwd = options.http_passwd;
+
+    if (!user || user.name !== uname || user.pass !== passwd) {
+      res.set("WWW-Authenticate", 'Basic realm="Restricted Area"');
+      return res.status(401).send("Authentication required.");
+    }
+    next();
+  };
+  app.use(basicAuth);
+  // --------------------------------------------------- 
 
   // Because we use host networking we need to filter out 
   // all requests except those coming from the HA proxy
@@ -79,20 +108,37 @@ module.exports = async (options) => {
     localIP = options.localIP;
   }
   app.use((req, res, next) => {
-    if (!localIP.includes(req.ip)) {
-      res.status(403).send("Denied");
-    } else {
+    // stand-alone - disable IP filtering.
+    //if (!localIP.includes(req.ip)) {
+    //  res.status(403).send("Denied");
+    //} else {
       next();
-    }
+    //}
   });
 
   app.use("/frontend", express.static("frontend"));
   // app.use("/api", require("../api/index_old"));
 
   const server = app.listen(port, () => {
-    console.log("Server started");
+    const nets = os.networkInterfaces();
+    const ips = [];
+
+    for (const name of Object.keys(nets)) {
+        for (const net of nets[name]) {
+            // IPv4, no local addresses: 127.0.0.1 & fe80::
+            if (net.family === "IPv4" && !net.internal) {
+                ips.push(net.address);
+            }
+        }
+    }
+    console.log("✅️ Server started, listening on port: ", port);
+    console.log("  Available at:");
+    ips.forEach(ip => {
+        console.log(`  ► http://${ip}:${port}/frontend`);
+    });
   });
 
   const api = require("../api/index");
   api(server);
 }
+

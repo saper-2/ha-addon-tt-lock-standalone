@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  ttlock:
+    image: ttlock-standalone
+    container_name: ttlock
+    network_mode: "host"
+    privileged: true
+    restart: unless-stopped
+    volumes:
+      - /var/run/dbus:/var/run/dbus
+      - /home/pi/ttlock/data:/data
+    environment:
+      MQTT_HOST: "<your_mqtt_server_ip>"
+      MQTT_PORT: 1883
+      MQTT_SSL: 0
+      MQTT_USER: "<mqtt_user>"
+      MQTT_PASS: "<mqtt_pass>"
+      #GATEWAY: "noble"
+      #GATEWAY_HOST: "127.0.0.1"
+      #GATEWAY_PORT: ""
+      GATEWAY_KEY: "f8b55c272eb007f501560839be1f1e7e" #key from tt-sdk-js
+      GATEWAY_USER: "admin" #from tt-sdk-js
+      GATEWAY_PASS: "admin" #from tt-sdk-js
+      #TTLOCK_IGNORE_CRC: 1
+      #NOBLE_WEBSOCKET: 1 #when GATEWAY=="noble"
+      #TTLOCK_DEBUG_COMM: 1
+      #MQTT_DEBUG: 1
+      #WEBSOCKET_DEBUG: 1 #"gateway_debug"
+      # set user&pass for web-ui
+      HTTP_USER: "pi"
+      HTTP_PASS: "1234"
+

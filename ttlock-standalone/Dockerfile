@@ -10,6 +10,7 @@ RUN setcap cap_net_raw+eip $(eval readlink -f $(which node))
 WORKDIR /
 
 COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 COPY addon /app
 RUN rm -rf /app/node_modules
 
