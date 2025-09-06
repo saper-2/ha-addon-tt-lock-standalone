@@ -31,7 +31,7 @@
   "dependencies": {
     "async-mqtt": "^2.6.1",
     "express": "^4.17.1",
-    "ttlock-sdk-js": "^0.3.14",
+    "ttlock-sdk-js": "git:saper-2/ttlock-sdk-js#main",
     "ws": "^7.4.2",
     "basic-auth": "^2.0.1"
   },
