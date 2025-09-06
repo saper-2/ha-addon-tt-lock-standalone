@@ -58,13 +58,22 @@ I commented out these lines (and their surrounding braces) to bypass the restric
 
 Once the UI was accessible, I improved error handling in the MQTT connection part. Specifically, I wrapped the `await ha.connect()` call in a `try { } catch (err) { }` block so that errors produce readable console output instead of obscure cryptographic error messages.
 
+Also added a console log showing which URLs the app is using.
+
 Finally, I added simple HTTP Basic Auth to the UI to keep curious users or pranksters out of the lock configuration :upside_down_face:.
 This required adding the basic-auth dependency to addon/package.json.
 
-You can see the exact changes in this diff file: [standalone.patch](standalone.patch) 
+Finally I renamed the directory :upside_down_face:
+
+You can see the exact changes in this diff file:  [code-changes.diff](code-changes.diff)
 
 ---
 ## Setting things up
+
+### Hardware
+
+I used Pi4 for building, and 32bit raspbian lite version. Then I moved the sdcard to Pi0w2 (v2 because it use newer CPU).
+
 
 ### Prerequisites
 You need Docker and basic container build tools.
@@ -89,7 +98,7 @@ git clone https://github.com/saper-2/ha-addon-tt-lock-standalone.git
 
 Then go into the integration folder and build the image:
 ```bash
-cd ~/ha-addon-tt-lock-standalone/ttlock-hass-integration
+cd ~/ha-addon-tt-lock-standalone/ttlock-standalone
 docker build --build-arg BUILD_FROM="node:18-alpine" -t ttlock-standalone .
 ```
 :information_source: The `BUILD_FROM` argument is required because the Dockerfile expects a base image from HA build system. We explicitly set it to `node:18-alpine`.
@@ -200,3 +209,4 @@ Ctrl + P, Ctrl + Q
 ## :information_source: Hints
 
 - If you are getting many operation failures when trying to perform actions (add card, PIN, etc.) and see a lot of `bad CRC` messages in the console, try uncommenting `TTLOCK_IGNORE_CRC: 1` in the compose file and restart the container. This might also make the app slightly more responsive.
+- If you're using Pi4 or 5 as build platform, then all the pairing and so on, you have to do when you move the card to Pi0W2 - Pi0 (v1) won't work, it uses different CPU architecture and docker won't run.

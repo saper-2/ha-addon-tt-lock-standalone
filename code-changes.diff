@@ -1,0 +1,338 @@
+diff --git a/docker-compose.yaml b/docker-compose.yaml
+new file mode 100644
+index 0000000..6e57269
+--- /dev/null
++++ b/docker-compose.yaml
+@@ -0,0 +1,33 @@
++version: "3.9"
++
++services:
++  ttlock:
++    image: ttlock-standalone
++    container_name: ttlock
++    network_mode: "host"
++    privileged: true
++    restart: unless-stopped
++    volumes:
++      - /var/run/dbus:/var/run/dbus
++      - /home/pi/ttlock/data:/data
++    environment:
++      MQTT_HOST: "<your_mqtt_server_ip>"
++      MQTT_PORT: 1883
++      MQTT_SSL: 0
++      MQTT_USER: "<mqtt_user>"
++      MQTT_PASS: "<mqtt_pass>"
++      #GATEWAY: "noble"
++      #GATEWAY_HOST: "127.0.0.1"
++      #GATEWAY_PORT: ""
++      GATEWAY_KEY: "f8b55c272eb007f501560839be1f1e7e" #key from tt-sdk-js
++      GATEWAY_USER: "admin" #from tt-sdk-js
++      GATEWAY_PASS: "admin" #from tt-sdk-js
++      #TTLOCK_IGNORE_CRC: 1
++      #NOBLE_WEBSOCKET: 1 #when GATEWAY=="noble"
++      #TTLOCK_DEBUG_COMM: 1
++      #MQTT_DEBUG: 1
++      #WEBSOCKET_DEBUG: 1 #"gateway_debug"
++      # set user&pass for web-ui
++      HTTP_USER: "pi"
++      HTTP_PASS: "1234"
++
+diff --git a/ttlock-standalone/Dockerfile b/ttlock-standalone/Dockerfile
+index 3a66358..e16ffdb 100644
+--- a/ttlock-standalone/Dockerfile
++++ b/ttlock-standalone/Dockerfile
+@@ -10,6 +10,7 @@ RUN setcap cap_net_raw+eip $(eval readlink -f $(which node))
+ WORKDIR /
+
+ COPY start.sh /app/start.sh
++RUN chmod +x /app/start.sh
+ COPY addon /app
+ RUN rm -rf /app/node_modules
+
+diff --git a/ttlock-standalone/addon/index.js b/ttlock-standalone/addon/index.js
+index 7bfc4cb..f4c7f19 100644
+--- a/ttlock-standalone/addon/index.js
++++ b/ttlock-standalone/addon/index.js
+@@ -22,5 +22,8 @@ init({
+   gateway_port: process.env.GATEWAY_PORT || 2846,
+   gateway_key: process.env.GATEWAY_KEY,
+   gateway_user: process.env.GATEWAY_USER,
+-  gateway_pass: process.env.GATEWAY_PASS
++  gateway_pass: process.env.GATEWAY_PASS,
++  // --- HTTP AUTH user&pass + fallback to `admin`:`admin`
++  http_user: process.env.HTTP_USER || "admin",
++  http_passwd: process.env.HTTP_PASS || "admin"
+ });
+diff --git a/ttlock-standalone/addon/package.json b/ttlock-standalone/addon/package.json
+index 1a492fc..734a8de 100644
+--- a/ttlock-standalone/addon/package.json
++++ b/ttlock-standalone/addon/package.json
+@@ -1,7 +1,7 @@
+ {
+-  "name": "ttlock-hass-integration",
+-  "version": "0.2.1",
+-  "description": "Integration of the offline TTLock sdk into Home Assistant",
++  "name": "ttlock-hass-integration-standalone",
++  "version": "0.0.1",
++  "description": "Standalone integration of the offline TTLock sdk without Home Assistant",
+   "main": "index.js",
+   "scripts": {
+     "start": "node ./index.js",
+@@ -9,7 +9,7 @@
+   },
+   "repository": {
+     "type": "git",
+-    "url": "git+https://github.com/kind3r/ttlock-hass-integration.git"
++    "url": "git+https://github.com/saper-2/ha-addon-tt-lock-standalone.git"
+   },
+   "keywords": [
+     "ttlock",
+@@ -19,19 +19,21 @@
+     "assistant",
+     "integration",
+     "unofficial",
+-    "offline"
++    "offline",
++    "standalone"
+   ],
+-  "author": "Emanuel Posescu <kind3r@gmail.com>",
++  "author": "saper-2 <sapers.2@gmail.com>",
+   "license": "GPL-3.0",
+   "bugs": {
+-    "url": "https://github.com/kind3r/hass-addons/issues"
++    "url": "https://github.com/saper-2/ha-addon-tt-lock-standalone"
+   },
+-  "homepage": "https://github.com/kind3r/hass-addons/tree/master/ttlock-hass-integration",
++  "homepage": "https://github.com/saper-2/ha-addon-tt-lock-standalone",
+   "dependencies": {
+     "async-mqtt": "^2.6.1",
+     "express": "^4.17.1",
+     "ttlock-sdk-js": "^0.3.14",
+-    "ws": "^7.4.2"
++    "ws": "^7.4.2",
++    "basic-auth": "^2.0.1"
+   },
+   "devDependencies": {
+     "@types/express": "^4.17.9",
+diff --git a/ttlock-standalone/addon/src/init.js b/ttlock-standalone/addon/src/init.js
+index f5e25cc..ddb6287 100644
+--- a/ttlock-standalone/addon/src/init.js
++++ b/ttlock-standalone/addon/src/init.js
+@@ -1,6 +1,10 @@
+ 'use strict';
+
+ const HomeAssistant = require('./ha');
++// add simple http authentication
++const auth = require("basic-auth");
++const os = require("os");
++
+
+ /**
+  * Handle the initialisation process
+@@ -54,7 +58,16 @@ module.exports = async (options) => {
+       mqttPass: options.mqttPass
+     }
+     ha = new HomeAssistant(haOptions);
+-    await ha.connect();
++      // try-catch MQTT connection, and give more readable message on error
++      try {
++        await ha.connect();
++        console.log("✅️ Connected to MQTT server: ", haOptions.mqttUrl);
++      } catch(err) {
++        console.error("❌ Unable to connect to MQTT server:", haOptions.mqttUrl);
++        console.error("Error:", err.message || err);
++        // kill
++        process.exit(1);
++      }
+   }
+
+   await manager.init();
+@@ -67,6 +80,22 @@ module.exports = async (options) => {
+     port = options.port;
+   }
+
++  // ----------------------------------------------------
++  // basic http auth , fallback to default "admin:admin"
++  const basicAuth = (req, res, next) => {
++    const user = auth(req);
++    const uname = options.http_user;
++    const passwd = options.http_passwd;
++
++    if (!user || user.name !== uname || user.pass !== passwd) {
++      res.set("WWW-Authenticate", 'Basic realm="Restricted Area"');
++      return res.status(401).send("Authentication required.");
++    }
++    next();
++  };
++  app.use(basicAuth);
++  // ---------------------------------------------------
++
+   // Because we use host networking we need to filter out
+   // all requests except those coming from the HA proxy
+   let localIP = [
+@@ -79,20 +108,37 @@ module.exports = async (options) => {
+     localIP = options.localIP;
+   }
+   app.use((req, res, next) => {
+-    if (!localIP.includes(req.ip)) {
+-      res.status(403).send("Denied");
+-    } else {
++    // stand-alone - disable IP filtering.
++    //if (!localIP.includes(req.ip)) {
++    //  res.status(403).send("Denied");
++    //} else {
+       next();
+-    }
++    //}
+   });
+
+   app.use("/frontend", express.static("frontend"));
+   // app.use("/api", require("../api/index_old"));
+
+   const server = app.listen(port, () => {
+-    console.log("Server started");
++    const nets = os.networkInterfaces();
++    const ips = [];
++
++    for (const name of Object.keys(nets)) {
++        for (const net of nets[name]) {
++            // IPv4, no local addresses: 127.0.0.1 & fe80::
++            if (net.family === "IPv4" && !net.internal) {
++                ips.push(net.address);
++            }
++        }
++    }
++    console.log("✅️ Server started, listening on port: ", port);
++    console.log("  Available at:");
++    ips.forEach(ip => {
++        console.log(`  ► http://${ip}:${port}/frontend`);
++    });
+   });
+
+   const api = require("../api/index");
+   api(server);
+-}
+\ No newline at end of file
++}
++
+diff --git a/ttlock-standalone/config.json b/ttlock-standalone/config.json
+deleted file mode 100644
+index d9fc9d9..0000000
+--- a/ttlock-standalone/config.json
++++ /dev/null
+@@ -1,37 +0,0 @@
+-{
+-  "name": "TTLock",
+-  "version": "0.4.11",
+-  "slug": "ttlock-hass-integration",
+-  "description": "Integration of the offline TTLock SDK into Home Assistant",
+-  "url": "https://github.com/kind3r/hass-addons",
+-  "panel_icon": "mdi:key-wireless",
+-  "startup": "application",
+-  "boot": "auto",
+-  "homeassistant_api": true,
+-  "hassio_api": true,
+-  "host_network": true,
+-  "host_dbus": true,
+-  "auth_api": true,
+-  "ingress": true,
+-  "ingress_port": 55099,
+-  "ingress_entry": "frontend/",
+-  "services": [
+-    "mqtt:want"
+-  ],
+-  "options": {
+-    "gateway": "none"
+-  },
+-  "schema": {
+-    "gateway": "match(^none|noble$)",
+-    "gateway_host": "str?",
+-    "gateway_port": "port?",
+-    "gateway_key": "str?",
+-    "gateway_user": "str?",
+-    "gateway_pass": "str?",
+-    "ignore_crc": "bool?",
+-    "debug_communication": "bool?",
+-    "debug_mqtt": "bool?",
+-    "gateway_debug": "bool?"
+-  },
+-  "arch": ["amd64", "armv7", "armhf", "i386" , "aarch64"]
+-}
+diff --git a/ttlock-standalone/start.sh b/ttlock-standalone/start.sh
+index 28613d2..8eebf61 100644
+--- a/ttlock-standalone/start.sh
++++ b/ttlock-standalone/start.sh
+@@ -1,36 +1,40 @@
+-#!/usr/bin/env bashio
++#!/usr/bin/env sh
+
+-export MQTT_HOST=$(bashio::services mqtt "host")
+-export MQTT_PORT=$(bashio::services mqtt "port")
+-export MQTT_SSL=$(bashio::services mqtt "ssl")
+-export MQTT_USER=$(bashio::services mqtt "username")
+-export MQTT_PASS=$(bashio::services mqtt "password")
+-export GATEWAY=$(bashio::config "gateway")
+-export GATEWAY_HOST=$(bashio::config "gateway_host")
+-export GATEWAY_PORT=$(bashio::config "gateway_port")
+-export GATEWAY_KEY=$(bashio::config "gateway_key")
+-export GATEWAY_USER=$(bashio::config "gateway_user")
+-export GATEWAY_PASS=$(bashio::config "gateway_pass")
+-if $(bashio::config.true "ignore_crc"); then
+-  echo "IGNORE CRC TRUE"
+-  export TTLOCK_IGNORE_CRC=1
+-fi
+-if $(bashio::config.equals "gateway" "noble"); then
+-  echo "Disable noble auto-binding"
+-  export NOBLE_WEBSOCKET=1
+-fi
+-if $(bashio::config.true "debug_communication"); then
+-  echo "Debug communication ON"
+-  export TTLOCK_DEBUG_COMM=1
+-fi
+-if $(bashio::config.true "debug_mqtt"); then
+-  echo "Debug MQTT"
+-  export MQTT_DEBUG=1
+-fi
+-if $(bashio::config.true "gateway_debug"); then
+-  echo "Debug gateway"
+-  export WEBSOCKET_DEBUG=1
+-fi
++#
++# ---- ALL ENV variables are passed via docker-compose.yaml file ----
++#
++#export MQTT_HOST="192.168.2.122"
++#export MQTT_PORT=1883
++#export MQTT_SSL=0
++#export MQTT_USER="test1"
++#export MQTT_PASS="test1"
++#export GATEWAY=
++#export GATEWAY_HOST=
++#export GATEWAY_PORT=
++#export GATEWAY_KEY="f8b55c272eb007f501560839be1f1e7e"
++#export GATEWAY_USER="admin"
++#export GATEWAY_PASS="admin"
++
++# if (bashio::config.true "ignore_crc"); then
++#  echo "IGNORE CRC TRUE"
++#  export TTLOCK_IGNORE_CRC=1
++# fi
++# if (bashio::config.equals "gateway" "noble"); then
++#  echo "Disable noble auto-binding"
++#  export NOBLE_WEBSOCKET=1
++# fi
++# if (bashio::config.true "debug_communication"); then
++#  echo "Debug communication ON"
++#  export TTLOCK_DEBUG_COMM=1
++# fi
++# if (bashio::config.true "debug_mqtt"); then
++#  echo "Debug MQTT"
++#  export MQTT_DEBUG=1
++# fi
++# if (bashio::config.true "gateway_debug"); then
++#  echo "Debug gateway"
++#  export WEBSOCKET_DEBUG=1
++# fi
+
+ cd /app
+ npm start
+\ No newline at end of file
